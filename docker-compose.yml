@@ -1,0 +1,15 @@
+# Optional: Postgres for a more "production-like" demo. SQLite works without this.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: nusa
+      POSTGRES_PASSWORD: nusa
+      POSTGRES_DB: nusawallet
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
