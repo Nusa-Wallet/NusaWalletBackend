@@ -27,7 +27,7 @@ def _to_response(link: PaymentLink) -> PaymentLinkResponse:
         amount=link.amount,
         note=link.note,
         status=link.status.value,
-        url=f"/pay/{link.code}",
+        url=f"/payment-links/{link.code}",
     )
 
 
