@@ -60,19 +60,31 @@ def get_link(code: str, db: Session = Depends(get_db)):
     return _to_response(link)
 
 
-def _fraud_score(amount: Decimal, currency: str, payer_name: str) -> dict:
-    """Best-effort call to the separate AI service. Never blocks the demo if
-    the service is down — returns a benign default."""
+def _fraud_score(link: PaymentLink, payer_name: str, origin_country: str | None,
+                 is_new_payer: bool) -> dict:
+    """Best-effort call to the AI fraud service with full transaction context.
+
+    Never blocks the demo if the AI service is down — returns an explicit benign
+    fallback (LOW / ALLOW) so the payment flow can still proceed."""
+    payload = {
+        "transaction_id": link.code,
+        "amount": float(link.amount),
+        "currency": link.currency,
+        "payer_name": payer_name,
+        "occurred_at": datetime.now(timezone.utc).isoformat(),
+        "is_new_payer": is_new_payer,
+    }
+    if origin_country:
+        payload["origin_country"] = origin_country.upper()
     try:
-        resp = httpx.post(
-            f"{settings.ai_service_url}/fraud/score",
-            json={"amount": float(amount), "currency": currency, "payer_name": payer_name},
-            timeout=3.0,
-        )
+        resp = httpx.post(f"{settings.ai_service_url}/fraud/score", json=payload, timeout=3.0)
         resp.raise_for_status()
         return resp.json()
     except Exception:
-        return {"risk_score": 0.0, "flagged": False, "reason": "ai-service-unavailable"}
+        return {
+            "risk_score": 0.0, "risk_level": "LOW", "flagged": False,
+            "recommended_action": "ALLOW", "factors": [], "reason": "ai-service-unavailable",
+        }
 
 
 @router.post("/{code}/pay")
@@ -85,11 +97,36 @@ def pay_link(code: str, payload: PayLinkRequest, db: Session = Depends(get_db)):
     if link.status != PaymentLinkStatus.PENDING:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Link is {link.status.value}")
 
-    fraud = _fraud_score(link.amount, link.currency, payload.payer_name)
-    if fraud.get("flagged"):
+    # Has this merchant been paid by this payer before? (first-time payer is riskier)
+    is_new_payer = (
+        db.query(PaymentLink)
+        .filter(
+            PaymentLink.merchant_user_id == link.merchant_user_id,
+            PaymentLink.payer_name == payload.payer_name,
+            PaymentLink.status == PaymentLinkStatus.PAID,
+        )
+        .first()
+        is None
+    )
+
+    fraud = _fraud_score(link, payload.payer_name, payload.origin_country, is_new_payer)
+    link.risk_score = float(fraud.get("risk_score") or 0.0)
+    link.risk_level = fraud.get("risk_level")
+    link.payer_name = payload.payer_name
+
+    # HIGH risk / REVIEW_REQUIRED holds the payment for manual review — not credited.
+    needs_review = fraud.get("recommended_action") == "REVIEW_REQUIRED" or fraud.get("flagged")
+    if needs_review:
+        link.status = PaymentLinkStatus.REVIEW_REQUIRED
+        db.commit()
         raise HTTPException(
             status.HTTP_402_PAYMENT_REQUIRED,
-            f"Transaction flagged for review (risk {fraud.get('risk_score')})",
+            detail={
+                "status": "REVIEW_REQUIRED",
+                "risk_score": link.risk_score,
+                "risk_level": link.risk_level,
+                "factors": fraud.get("factors", []),
+            },
         )
 
     wallet = ledger.get_or_create_wallet(db, link.merchant_user_id, link.currency)
@@ -99,8 +136,10 @@ def pay_link(code: str, payload: PayLinkRequest, db: Session = Depends(get_db)):
         f"Payment from {payload.payer_name}",
     )
     link.status = PaymentLinkStatus.PAID
-    link.payer_name = payload.payer_name
     link.paid_at = datetime.now(timezone.utc)
     db.commit()
 
-    return {"status": "PAID", "credited": link.amount, "currency": link.currency, "fraud": fraud}
+    return {
+        "status": "PAID", "credited": link.amount, "currency": link.currency,
+        "risk_score": link.risk_score, "risk_level": link.risk_level, "fraud": fraud,
+    }

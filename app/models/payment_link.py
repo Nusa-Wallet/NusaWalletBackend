@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, Numeric, String
+from sqlalchemy import DateTime, Enum, Float, ForeignKey, Integer, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -11,6 +11,7 @@ class PaymentLinkStatus(str, enum.Enum):
     PENDING = "PENDING"
     PAID = "PAID"
     EXPIRED = "EXPIRED"
+    REVIEW_REQUIRED = "REVIEW_REQUIRED"  # held by the fraud engine for manual review
 
 
 class PaymentLink(Base):
@@ -30,5 +31,8 @@ class PaymentLink(Base):
     status: Mapped[PaymentLinkStatus] = mapped_column(
         Enum(PaymentLinkStatus), default=PaymentLinkStatus.PENDING
     )
+    # Fraud result stored with the transaction (Phase 13 integration).
+    risk_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    risk_level: Mapped[str | None] = mapped_column(String(10), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

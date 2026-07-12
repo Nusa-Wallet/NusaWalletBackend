@@ -32,16 +32,20 @@ def convert(
     dst = ledger.get_or_create_wallet(db, current.id, dst_ccy)
     db.flush()
 
-    if ledger.get_balance(db, src.id) < payload.amount:
+    # Convert only the recommended portion now (AI split recommendation); rest is held.
+    pct = Decimal(payload.convert_percentage) / Decimal(100)
+    convert_amount = (payload.amount * pct).quantize(Decimal("0.0001"))
+
+    if ledger.get_balance(db, src.id) < convert_amount:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Insufficient balance")
 
     rate = fx.get_rate(src_ccy, dst_ccy)
-    gross = payload.amount * rate
+    gross = convert_amount * rate
     fee = (gross * CONVERSION_FEE_RATE).quantize(Decimal("0.0001"))
     net = gross - fee
 
     ref = f"conv-{src_ccy}-{dst_ccy}"
-    ledger.post_entry(db, src, EntryDirection.DEBIT, payload.amount, "conversion", ref,
+    ledger.post_entry(db, src, EntryDirection.DEBIT, convert_amount, "conversion", ref,
                       f"Convert to {dst_ccy} @ {rate}")
     ledger.post_entry(db, dst, EntryDirection.CREDIT, net, "conversion", ref,
                       f"Converted from {src_ccy} (fee {fee})")
@@ -50,7 +54,10 @@ def convert(
     return {
         "from_currency": src_ccy,
         "to_currency": dst_ccy,
-        "amount_in": payload.amount,
+        "convert_percentage": payload.convert_percentage,
+        "amount_requested": payload.amount,
+        "amount_in": convert_amount,
+        "amount_held": (payload.amount - convert_amount).quantize(Decimal("0.0001")),
         "rate": rate,
         "fee": fee,
         "amount_out": net,
