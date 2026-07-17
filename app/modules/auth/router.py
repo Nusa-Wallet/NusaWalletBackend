@@ -11,20 +11,37 @@ from app.schemas.auth import (
     RegisterRequest,
     TokenResponse,
     UserResponse,
+    normalize_phone,
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-def _authenticate(email: str, password: str, db: Session) -> TokenResponse:
+def _invalid_credentials() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def _authenticate(
+    password: str,
+    db: Session,
+    *,
+    email: str | None = None,
+    phone: str | None = None,
+) -> TokenResponse:
     """Validate credentials and issue the token shared by JSON and OAuth2 login."""
-    user = db.query(User).filter(User.email == email).first()
+    if email is not None:
+        user = db.query(User).filter(User.email == email.strip().lower()).first()
+    elif phone is not None:
+        user = db.query(User).filter(User.phone == phone).first()
+    else:  # Defensive: LoginRequest already rejects this state.
+        raise _invalid_credentials()
+
     if not user or not verify_password(password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise _invalid_credentials()
     return TokenResponse(access_token=create_access_token(user.email))
 
 
@@ -32,6 +49,8 @@ def _authenticate(email: str, password: str, db: Session) -> TokenResponse:
 def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     if db.query(User).filter(User.email == payload.email).first():
         raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered")
+    if payload.phone and db.query(User).filter(User.phone == payload.phone).first():
+        raise HTTPException(status.HTTP_409_CONFLICT, "Phone already registered")
     user = User(
         email=payload.email,
         full_name=payload.full_name,
@@ -47,8 +66,13 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
 
 @router.post("/login", response_model=TokenResponse)
 def login(payload: LoginRequest, db: Session = Depends(get_db)):
-    """JSON login used by the mobile client."""
-    return _authenticate(payload.email, payload.password, db)
+    """JSON login by email or phone, used by the mobile client."""
+    return _authenticate(
+        payload.password,
+        db,
+        email=str(payload.email) if payload.email is not None else None,
+        phone=payload.phone,
+    )
 
 
 @router.post("/token", response_model=TokenResponse)
@@ -58,10 +82,17 @@ def oauth2_token(
 ):
     """OAuth2 password-form login used by Swagger UI.
 
-    Enter the account email in Swagger's ``username`` field. Swagger stores the
-    returned JWT and sends it as a Bearer token to every protected endpoint.
+    Enter the account email or phone in Swagger's ``username`` field. Swagger
+    stores the returned JWT and sends it to every protected endpoint.
     """
-    return _authenticate(form.username, form.password, db)
+    identifier = form.username.strip()
+    if "@" in identifier:
+        return _authenticate(form.password, db, email=identifier)
+    try:
+        phone = normalize_phone(identifier)
+    except ValueError:
+        raise _invalid_credentials()
+    return _authenticate(form.password, db, phone=phone)
 
 
 @router.get("/me", response_model=UserResponse)

@@ -34,13 +34,14 @@ Docs: http://localhost:8000/docs
 
 ## Authentication
 
-- `POST /auth/login` accepts JSON (`email` + `password`) for the mobile client.
+- `POST /auth/login` accepts JSON with either (`email` + `password`) or
+  (`phone` + `password`) for the mobile client.
 - `POST /auth/token` accepts OAuth2 form data (`username` + `password`) for Swagger.
 - Protected endpoints expect `Authorization: Bearer <access_token>`.
 
 To authorize all protected endpoints in Swagger, click **Authorize** and fill:
 
-- `username`: the account email, for example `demo@nusawallet.id`
+- `username`: the account email (`demo@nusawallet.id`) or phone (`081234567890`)
 - `password`: the account password, for example `password123`
 - `client_id` and `client_secret`: leave blank
 
