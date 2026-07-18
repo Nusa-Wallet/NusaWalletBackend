@@ -32,6 +32,31 @@ uvicorn app.main:app --reload --port 8000
 
 Docs: http://localhost:8000/docs
 
+## Demo operability
+
+From the workspace root, start the full demo stack with:
+
+```powershell
+.\scripts\demo.ps1
+```
+
+Use `-SkipInstall` when dependencies and seed data are already prepared:
+
+```powershell
+.\scripts\demo.ps1 -SkipInstall
+```
+
+After the services are ready, run the backend smoke flow:
+
+```powershell
+cd NusaWalletBackend
+.\.venv\Scripts\python.exe scripts\smoke_demo.py
+```
+
+The smoke flow checks backend + AI health, demo login, wallet retrieval, public
+payment checkout rendering, sandbox payment, FX advisory, conversion, and
+conversion idempotency.
+
 ## Authentication
 
 - `POST /auth/login` accepts JSON with either (`email` + `password`) or
