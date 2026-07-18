@@ -57,6 +57,25 @@ The smoke flow checks backend + AI health, demo login, wallet retrieval, public
 payment checkout rendering, sandbox payment, FX advisory, conversion, and
 conversion idempotency.
 
+## Minimal deploy hardening
+
+Development defaults are optimized for the hackathon demo. For a deployed
+environment, set:
+
+```env
+APP_ENV=production
+JWT_SECRET=<long-random-secret>
+CORS_ALLOW_ORIGINS=https://your-mobile-web-origin.example
+AUTO_CREATE_TABLES=false
+DATABASE_URL=postgresql+psycopg2://...
+AI_SERVICE_URL=https://your-ai-service.example
+```
+
+When `APP_ENV=production`, the app refuses to start with the demo JWT secret,
+wildcard CORS, or automatic table creation. Swagger/OpenAPI routes are also
+disabled in production mode. Use migrations, not `Base.metadata.create_all`, for
+schema changes outside the demo environment.
+
 ## Authentication
 
 - `POST /auth/login` accepts JSON with either (`email` + `password`) or
