@@ -26,6 +26,7 @@ from app.models import (
     User,
     Wallet,
 )
+from app.services import ledger
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
 TestingSession = sessionmaker(bind=engine, autoflush=False, autocommit=False)
@@ -76,6 +77,18 @@ class BackendAiContractTest(unittest.TestCase):
         self.assertEqual(r.status_code, 201, r.text)
         return r.json()["code"]
 
+    def _signed_totals_by_currency(self, ref_id: str) -> dict[str, Decimal]:
+        db = TestingSession()
+        try:
+            totals: dict[str, Decimal] = {}
+            for entry in db.query(LedgerEntry).filter(LedgerEntry.ref_id == ref_id).all():
+                sign = Decimal(1) if entry.direction == EntryDirection.CREDIT else Decimal(-1)
+                totals.setdefault(entry.currency, Decimal("0"))
+                totals[entry.currency] += sign * Decimal(entry.amount)
+            return totals
+        finally:
+            db.close()
+
     # --- FX proxy ---------------------------------------------------------
     @patch("app.modules.insights.router.httpx.get")
     def test_fx_proxy_forwards_params_and_passes_through(self, mock_get):
@@ -113,6 +126,7 @@ class BackendAiContractTest(unittest.TestCase):
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(r.json()["status"], "PAID")
         self.assertEqual(r.json()["risk_level"], "LOW")
+        self.assertEqual(self._signed_totals_by_currency(code), {"SGD": Decimal("0.0000")})
         sent = mock_post.call_args.kwargs["json"]
         for key in ("transaction_id", "amount", "currency", "payer_name", "occurred_at", "is_new_payer"):
             self.assertIn(key, sent)  # CONTRACTS.md request fields
@@ -152,8 +166,7 @@ class BackendAiContractTest(unittest.TestCase):
         wallet = Wallet(user_id=self.user_id, currency="USD")
         db.add(wallet)
         db.flush()
-        db.add(LedgerEntry(wallet_id=wallet.id, currency="USD",
-                           direction=EntryDirection.CREDIT, amount=Decimal("1000"), ref_type="seed"))
+        ledger.record_external_credit(db, wallet, Decimal("1000"), "seed", "conversion-test-seed")
         db.commit()
         db.close()
         with patch("app.services.fx.get_rate", return_value=Decimal("16000")):
@@ -165,6 +178,10 @@ class BackendAiContractTest(unittest.TestCase):
         self.assertEqual(body["convert_percentage"], 40)
         self.assertEqual(float(body["amount_in"]), 400.0)     # 40% converted now
         self.assertEqual(float(body["amount_held"]), 600.0)   # 60% held
+        self.assertEqual(
+            self._signed_totals_by_currency("conv-USD-IDR"),
+            {"USD": Decimal("0.0000"), "IDR": Decimal("0.0000")},
+        )
 
 
 if __name__ == "__main__":

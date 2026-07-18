@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.deps import get_current_user
-from app.models import EntryDirection, User
+from app.models import User
 from app.schemas.wallet import ConvertRequest
 from app.services import fx, ledger
 
@@ -45,10 +45,16 @@ def convert(
     net = gross - fee
 
     ref = f"conv-{src_ccy}-{dst_ccy}"
-    ledger.post_entry(db, src, EntryDirection.DEBIT, convert_amount, "conversion", ref,
-                      f"Convert to {dst_ccy} @ {rate}")
-    ledger.post_entry(db, dst, EntryDirection.CREDIT, net, "conversion", ref,
-                      f"Converted from {src_ccy} (fee {fee})")
+    ledger.record_fx_conversion(
+        db,
+        src,
+        dst,
+        convert_amount,
+        gross,
+        fee,
+        ref,
+        f"Convert {src_ccy} to {dst_ccy} @ {rate}",
+    )
     db.commit()
 
     return {

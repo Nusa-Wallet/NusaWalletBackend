@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.database import get_db
 from app.deps import get_current_user
-from app.models import EntryDirection, PaymentLink, PaymentLinkStatus, User
+from app.models import PaymentLink, PaymentLinkStatus, User
 from app.schemas.payment_link import (
     CreatePaymentLinkRequest,
     PayLinkRequest,
@@ -131,8 +131,8 @@ def pay_link(code: str, payload: PayLinkRequest, db: Session = Depends(get_db)):
 
     wallet = ledger.get_or_create_wallet(db, link.merchant_user_id, link.currency)
     db.flush()
-    ledger.post_entry(
-        db, wallet, EntryDirection.CREDIT, link.amount, "payment_link", link.code,
+    ledger.record_external_credit(
+        db, wallet, link.amount, "payment_link", link.code,
         f"Payment from {payload.payer_name}",
     )
     link.status = PaymentLinkStatus.PAID

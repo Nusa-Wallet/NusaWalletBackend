@@ -8,7 +8,7 @@ from decimal import Decimal
 
 from app.core.database import Base, SessionLocal, engine
 from app.core.security import hash_password
-from app.models import EntryDirection, User
+from app.models import User
 from app.services import ledger
 
 
@@ -36,8 +36,13 @@ def run():
             wallet = ledger.get_or_create_wallet(db, user.id, ccy)
             db.flush()
             if ledger.get_balance(db, wallet.id) == 0:
-                ledger.post_entry(db, wallet, EntryDirection.CREDIT, amount, "topup",
-                                  description="Initial demo balance")
+                ledger.record_external_credit(
+                    db,
+                    wallet,
+                    amount,
+                    "topup",
+                    description="Initial demo balance",
+                )
         db.commit()
         print("Seed complete.")
     finally:
