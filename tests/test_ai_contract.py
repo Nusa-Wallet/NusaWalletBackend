@@ -19,6 +19,7 @@ from app.core.database import Base, get_db
 from app.deps import get_current_user
 from app.main import app
 from app.models import (
+    AiAuditEvent,
     EntryDirection,
     LedgerEntry,
     PaymentLink,
@@ -107,6 +108,17 @@ class BackendAiContractTest(unittest.TestCase):
         finally:
             db.close()
 
+    def _audit_events(self, ref_type: str, ref_id: str) -> list[AiAuditEvent]:
+        db = TestingSession()
+        try:
+            return (
+                db.query(AiAuditEvent)
+                .filter(AiAuditEvent.ref_type == ref_type, AiAuditEvent.ref_id == ref_id)
+                .all()
+            )
+        finally:
+            db.close()
+
     # --- FX proxy ---------------------------------------------------------
     @patch("app.modules.insights.router.httpx.get")
     def test_fx_proxy_forwards_params_and_passes_through(self, mock_get):
@@ -146,11 +158,17 @@ class BackendAiContractTest(unittest.TestCase):
         self.assertEqual(r.json()["risk_level"], "LOW")
         self.assertEqual(self._signed_totals_by_currency(code), {"SGD": Decimal("0.0000")})
         self.assertEqual(self._ledger_entry_count(code), 2)
+        audits = self._audit_events("payment_link", code)
+        self.assertEqual(len(audits), 1)
+        self.assertEqual(audits[0].purpose, "fraud_score")
+        self.assertEqual(audits[0].status, "SUCCESS")
+        self.assertEqual(audits[0].request_payload["origin_country"], "SG")
         retry = self.client.post(f"/payment-links/{code}/pay",
                                  json={"payer_name": "John Doe", "origin_country": "SG"})
         self.assertEqual(retry.status_code, 200, retry.text)
         self.assertTrue(retry.json()["idempotent"])
         self.assertEqual(self._ledger_entry_count(code), 2)
+        self.assertEqual(len(self._audit_events("payment_link", code)), 1)
         sent = mock_post.call_args.kwargs["json"]
         for key in ("transaction_id", "amount", "currency", "payer_name", "occurred_at", "is_new_payer"):
             self.assertIn(key, sent)  # CONTRACTS.md request fields
@@ -176,6 +194,9 @@ class BackendAiContractTest(unittest.TestCase):
         self.assertEqual(link.risk_level, "HIGH")
         self.assertAlmostEqual(link.risk_score, 0.9)
         db.close()
+        audits = self._audit_events("payment_link", code)
+        self.assertEqual(len(audits), 1)
+        self.assertEqual(audits[0].response_payload["recommended_action"], "REVIEW_REQUIRED")
 
     @patch("app.modules.payment_link.router.httpx.post", side_effect=RuntimeError("down"))
     def test_fraud_fallback_still_credits(self, _):
@@ -183,6 +204,9 @@ class BackendAiContractTest(unittest.TestCase):
         r = self.client.post(f"/payment-links/{code}/pay", json={"payer_name": "Jane Roe"})
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(r.json()["status"], "PAID")
+        audits = self._audit_events("payment_link", code)
+        self.assertEqual(audits[0].status, "FALLBACK")
+        self.assertIn("ai-service-unavailable", audits[0].response_payload["reason"])
 
     # --- Conversion split -------------------------------------------------
     def test_conversion_accepts_split_percentage(self):
@@ -193,7 +217,17 @@ class BackendAiContractTest(unittest.TestCase):
         ledger.record_external_credit(db, wallet, Decimal("1000"), "seed", "conversion-test-seed")
         db.commit()
         db.close()
-        with patch("app.services.fx.get_rate", return_value=Decimal("16000")):
+        with (
+            patch("app.services.fx.get_rate", return_value=Decimal("16000")),
+            patch("app.modules.settlement.router.httpx.get") as mock_fx_audit,
+        ):
+            mock_fx_audit.return_value = _resp({
+                "pair": "USD/IDR",
+                "action": "SPLIT_CONVERSION",
+                "confidence": 0.75,
+                "recommended_convert_percentage": 40,
+                "model_version": "fx-decision-1.0.0",
+            })
             r = self.client.post("/settlement/convert", json={
                 "from_currency": "USD",
                 "to_currency": "IDR",
@@ -213,6 +247,11 @@ class BackendAiContractTest(unittest.TestCase):
             {"USD": Decimal("0.0000"), "IDR": Decimal("0.0000")},
         )
         self.assertEqual(self._ledger_entry_count(ref_id), 5)
+        audits = self._audit_events("conversion", ref_id)
+        self.assertEqual(len(audits), 1)
+        self.assertEqual(audits[0].purpose, "fx_advisory")
+        self.assertEqual(audits[0].model_version, "fx-decision-1.0.0")
+        self.assertEqual(audits[0].request_payload["amount"], 400.0)
         retry = self.client.post("/settlement/convert", json={
             "from_currency": "USD",
             "to_currency": "IDR",
@@ -224,6 +263,7 @@ class BackendAiContractTest(unittest.TestCase):
         self.assertTrue(retry.json()["idempotent"])
         self.assertEqual(retry.json()["transaction_id"], body["transaction_id"])
         self.assertEqual(self._ledger_entry_count(ref_id), 5)
+        self.assertEqual(len(self._audit_events("conversion", ref_id)), 1)
 
 
 if __name__ == "__main__":

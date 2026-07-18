@@ -1,13 +1,16 @@
 from decimal import Decimal
 from datetime import datetime, timezone
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.deps import get_current_user
 from app.models import Conversion, ConversionStatus, User
 from app.schemas.wallet import ConvertRequest
+from app.services.ai_audit import record_ai_audit
 from app.services import fx, ledger
 
 router = APIRouter(prefix="/settlement", tags=["settlement"])
@@ -47,6 +50,30 @@ def _conversion_response(conversion: Conversion, *, idempotent: bool = False) ->
         "fee": conversion.fee,
         "amount_out": conversion.amount_out,
     }
+
+
+def _fx_advisory_snapshot(src_ccy: str, dst_ccy: str, amount: Decimal) -> tuple[dict, dict, str, str | None]:
+    request_payload = {
+        "base": src_ccy,
+        "quote": dst_ccy,
+        "amount": float(amount),
+        "horizon_days": 7,
+        "risk_preference": "MODERATE",
+    }
+    try:
+        resp = httpx.get(
+            f"{settings.ai_service_url}/fx/advisory",
+            params=request_payload,
+            timeout=3.0,
+        )
+        resp.raise_for_status()
+        return request_payload, resp.json(), "SUCCESS", None
+    except Exception as exc:
+        return request_payload, {
+            "pair": f"{src_ccy}/{dst_ccy}",
+            "model_version": "unavailable",
+            "reason": "ai-service-unavailable",
+        }, "FALLBACK", str(exc)
 
 
 @router.post("/convert")
@@ -131,6 +158,21 @@ def convert(
     net = gross - fee
 
     ref = f"conv-{conversion.id}"
+    advisory_request, advisory_response, audit_status, audit_error = _fx_advisory_snapshot(
+        src_ccy,
+        dst_ccy,
+        convert_amount,
+    )
+    record_ai_audit(
+        db,
+        ref_type="conversion",
+        ref_id=ref,
+        purpose="fx_advisory",
+        status=audit_status,
+        request_payload=advisory_request,
+        response_payload=advisory_response,
+        error=audit_error,
+    )
     ledger.record_fx_conversion(
         db,
         src,

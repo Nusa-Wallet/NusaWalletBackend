@@ -17,6 +17,7 @@ from app.schemas.payment_link import (
     PayLinkRequest,
     PaymentLinkResponse,
 )
+from app.services.ai_audit import record_ai_audit
 from app.services import ledger
 
 router = APIRouter(prefix="/payment-links", tags=["payment-links"])
@@ -224,8 +225,12 @@ def public_payment_checkout(code: str, request: Request, db: Session = Depends(g
     return HTMLResponse(_public_checkout_html(link, request))
 
 
-def _fraud_score(link: PaymentLink, payer_name: str, origin_country: str | None,
-                 is_new_payer: bool) -> dict:
+def _fraud_score(
+    link: PaymentLink,
+    payer_name: str,
+    origin_country: str | None,
+    is_new_payer: bool,
+) -> tuple[dict, dict, str, str | None]:
     """Best-effort call to the AI fraud service with full transaction context.
 
     Never blocks the demo if the AI service is down — returns an explicit benign
@@ -243,12 +248,12 @@ def _fraud_score(link: PaymentLink, payer_name: str, origin_country: str | None,
     try:
         resp = httpx.post(f"{settings.ai_service_url}/fraud/score", json=payload, timeout=3.0)
         resp.raise_for_status()
-        return resp.json()
-    except Exception:
-        return {
+        return payload, resp.json(), "SUCCESS", None
+    except Exception as exc:
+        return payload, {
             "risk_score": 0.0, "risk_level": "LOW", "flagged": False,
             "recommended_action": "ALLOW", "factors": [], "reason": "ai-service-unavailable",
-        }
+        }, "FALLBACK", str(exc)
 
 
 def _transition_link(link: PaymentLink, target: PaymentLinkStatus) -> None:
@@ -322,7 +327,22 @@ def pay_link(code: str, payload: PayLinkRequest, db: Session = Depends(get_db)):
         is None
     )
 
-    fraud = _fraud_score(link, payload.payer_name, payload.origin_country, is_new_payer)
+    fraud_request, fraud, audit_status, audit_error = _fraud_score(
+        link,
+        payload.payer_name,
+        payload.origin_country,
+        is_new_payer,
+    )
+    record_ai_audit(
+        db,
+        ref_type="payment_link",
+        ref_id=link.code,
+        purpose="fraud_score",
+        status=audit_status,
+        request_payload=fraud_request,
+        response_payload=fraud,
+        error=audit_error,
+    )
     link.risk_score = float(fraud.get("risk_score") or 0.0)
     link.risk_level = fraud.get("risk_level")
     link.payer_name = payload.payer_name
