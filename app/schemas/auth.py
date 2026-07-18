@@ -24,17 +24,37 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     full_name: str
     password: str
-    phone: str | None = None
+    phone: str
 
     @field_validator("email")
     @classmethod
     def normalize_email(cls, value: EmailStr) -> str:
         return str(value).strip().lower()
 
+    @field_validator("full_name")
+    @classmethod
+    def validate_full_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 2:
+            raise ValueError("Full name must contain at least 2 characters")
+        if re.search(r"\d", normalized):
+            raise ValueError("Full name must not contain numbers")
+        return normalized
+
     @field_validator("phone")
     @classmethod
-    def validate_phone(cls, value: str | None) -> str | None:
-        return normalize_phone(value) if value is not None else None
+    def validate_phone(cls, value: str) -> str:
+        normalized = normalize_phone(value)
+        if not 12 <= len(normalized) <= 13:
+            raise ValueError("Phone number must contain 12 to 13 digits")
+        return normalized
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        if len(value) < 8:
+            raise ValueError("Password must contain at least 8 characters")
+        return value
 
 
 class LoginRequest(BaseModel):

@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.datetime import utc_isoformat
 from app.deps import get_current_user
 from app.models import LedgerEntry, User, Wallet
 from app.schemas.wallet import LedgerEntryResponse, WalletBalance
@@ -58,7 +59,7 @@ def recent_transactions(
             amount=e.amount,
             ref_type=e.ref_type,
             description=e.description,
-            created_at=e.created_at.isoformat(),
+            created_at=utc_isoformat(e.created_at),
         )
         for e in entries
     ]
@@ -92,7 +93,7 @@ def wallet_history(
             amount=e.amount,
             ref_type=e.ref_type,
             description=e.description,
-            created_at=e.created_at.isoformat(),
+            created_at=utc_isoformat(e.created_at),
         )
         for e in entries
     ]

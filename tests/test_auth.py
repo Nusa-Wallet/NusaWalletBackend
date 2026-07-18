@@ -47,6 +47,7 @@ class AuthTest(unittest.TestCase):
             "/auth/register",
             json={
                 "email": email,
+                "phone": "081111111111",
                 "full_name": "Auth Test",
                 "password": password,
             },
@@ -98,6 +99,27 @@ class AuthTest(unittest.TestCase):
         self.assertEqual(me.json()["email"], email)
         self.assertEqual(me.json()["phone"], phone)
 
+    def test_register_rejects_invalid_identity_and_password_fields(self):
+        valid = {
+            "email": "validation-test@nusawallet.id",
+            "phone": "083333333333",
+            "full_name": "Validation Test",
+            "password": "password123",
+        }
+        invalid_cases = {
+            "phone is required": {"phone": None},
+            "phone must be 12 to 13 digits": {"phone": "0812345678"},
+            "email must be valid": {"email": "email-tidak-valid"},
+            "name cannot contain digits": {"full_name": "User 123"},
+            "password must be at least 8 characters": {"password": "short"},
+        }
+
+        for label, invalid_values in invalid_cases.items():
+            with self.subTest(label):
+                payload = {**valid, **invalid_values}
+                response = self.client.post("/auth/register", json=payload)
+                self.assertEqual(response.status_code, 422, response.text)
+
     def test_login_requires_exactly_one_identifier(self):
         both = self.client.post(
             "/auth/login",
@@ -119,6 +141,7 @@ class AuthTest(unittest.TestCase):
             "/auth/register",
             json={
                 "email": email,
+                "phone": "082222222222",
                 "full_name": "Swagger Auth Test",
                 "password": password,
             },
