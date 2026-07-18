@@ -89,6 +89,13 @@ class BackendAiContractTest(unittest.TestCase):
         finally:
             db.close()
 
+    def _ledger_entry_count(self, ref_id: str) -> int:
+        db = TestingSession()
+        try:
+            return db.query(LedgerEntry).filter(LedgerEntry.ref_id == ref_id).count()
+        finally:
+            db.close()
+
     # --- FX proxy ---------------------------------------------------------
     @patch("app.modules.insights.router.httpx.get")
     def test_fx_proxy_forwards_params_and_passes_through(self, mock_get):
@@ -127,6 +134,12 @@ class BackendAiContractTest(unittest.TestCase):
         self.assertEqual(r.json()["status"], "PAID")
         self.assertEqual(r.json()["risk_level"], "LOW")
         self.assertEqual(self._signed_totals_by_currency(code), {"SGD": Decimal("0.0000")})
+        self.assertEqual(self._ledger_entry_count(code), 2)
+        retry = self.client.post(f"/payment-links/{code}/pay",
+                                 json={"payer_name": "John Doe", "origin_country": "SG"})
+        self.assertEqual(retry.status_code, 200, retry.text)
+        self.assertTrue(retry.json()["idempotent"])
+        self.assertEqual(self._ledger_entry_count(code), 2)
         sent = mock_post.call_args.kwargs["json"]
         for key in ("transaction_id", "amount", "currency", "payer_name", "occurred_at", "is_new_payer"):
             self.assertIn(key, sent)  # CONTRACTS.md request fields
@@ -171,17 +184,35 @@ class BackendAiContractTest(unittest.TestCase):
         db.close()
         with patch("app.services.fx.get_rate", return_value=Decimal("16000")):
             r = self.client.post("/settlement/convert", json={
-                "from_currency": "USD", "to_currency": "IDR", "amount": "1000", "convert_percentage": 40,
+                "from_currency": "USD",
+                "to_currency": "IDR",
+                "amount": "1000",
+                "convert_percentage": 40,
+                "idempotency_key": "convert-usd-idr-40",
             })
         self.assertEqual(r.status_code, 200, r.text)
         body = r.json()
+        ref_id = f"conv-{body['transaction_id']}"
         self.assertEqual(body["convert_percentage"], 40)
+        self.assertEqual(body["status"], "COMPLETED")
         self.assertEqual(float(body["amount_in"]), 400.0)     # 40% converted now
         self.assertEqual(float(body["amount_held"]), 600.0)   # 60% held
         self.assertEqual(
-            self._signed_totals_by_currency("conv-USD-IDR"),
+            self._signed_totals_by_currency(ref_id),
             {"USD": Decimal("0.0000"), "IDR": Decimal("0.0000")},
         )
+        self.assertEqual(self._ledger_entry_count(ref_id), 5)
+        retry = self.client.post("/settlement/convert", json={
+            "from_currency": "USD",
+            "to_currency": "IDR",
+            "amount": "1000",
+            "convert_percentage": 40,
+            "idempotency_key": "convert-usd-idr-40",
+        })
+        self.assertEqual(retry.status_code, 200, retry.text)
+        self.assertTrue(retry.json()["idempotent"])
+        self.assertEqual(retry.json()["transaction_id"], body["transaction_id"])
+        self.assertEqual(self._ledger_entry_count(ref_id), 5)
 
 
 if __name__ == "__main__":

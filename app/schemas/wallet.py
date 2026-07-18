@@ -26,3 +26,4 @@ class ConvertRequest(BaseModel):
     amount: Decimal
     # Portion to convert now, from the AI split recommendation (Phase 13). 100 = all now.
     convert_percentage: int = Field(default=100, ge=1, le=100)
+    idempotency_key: str | None = Field(default=None, max_length=128)

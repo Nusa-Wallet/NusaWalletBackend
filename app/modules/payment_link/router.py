@@ -87,6 +87,51 @@ def _fraud_score(link: PaymentLink, payer_name: str, origin_country: str | None,
         }
 
 
+def _transition_link(link: PaymentLink, target: PaymentLinkStatus) -> None:
+    allowed = {
+        PaymentLinkStatus.PENDING: {
+            PaymentLinkStatus.PAID,
+            PaymentLinkStatus.REVIEW_REQUIRED,
+            PaymentLinkStatus.EXPIRED,
+        },
+        PaymentLinkStatus.PAID: set(),
+        PaymentLinkStatus.REVIEW_REQUIRED: set(),
+        PaymentLinkStatus.EXPIRED: set(),
+    }
+    if link.status == target:
+        return
+    if target not in allowed[link.status]:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Cannot transition payment link from {link.status.value} to {target.value}",
+        )
+    link.status = target
+
+
+def _paid_response(link: PaymentLink) -> dict:
+    return {
+        "status": "PAID",
+        "credited": link.amount,
+        "currency": link.currency,
+        "risk_score": link.risk_score,
+        "risk_level": link.risk_level,
+        "idempotent": True,
+    }
+
+
+def _review_required_error(link: PaymentLink, factors: list[str] | None = None) -> HTTPException:
+    return HTTPException(
+        status.HTTP_402_PAYMENT_REQUIRED,
+        detail={
+            "status": "REVIEW_REQUIRED",
+            "risk_score": link.risk_score,
+            "risk_level": link.risk_level,
+            "factors": factors or [],
+            "idempotent": True,
+        },
+    )
+
+
 @router.post("/{code}/pay")
 def pay_link(code: str, payload: PayLinkRequest, db: Session = Depends(get_db)):
     """Simulate an international payer paying the link. On success, the merchant's
@@ -94,8 +139,12 @@ def pay_link(code: str, payload: PayLinkRequest, db: Session = Depends(get_db)):
     link = db.query(PaymentLink).filter(PaymentLink.code == code).first()
     if not link:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Payment link not found")
+    if link.status == PaymentLinkStatus.PAID:
+        return _paid_response(link)
+    if link.status == PaymentLinkStatus.REVIEW_REQUIRED:
+        raise _review_required_error(link)
     if link.status != PaymentLinkStatus.PENDING:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Link is {link.status.value}")
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Link is {link.status.value}")
 
     # Has this merchant been paid by this payer before? (first-time payer is riskier)
     is_new_payer = (
@@ -117,17 +166,9 @@ def pay_link(code: str, payload: PayLinkRequest, db: Session = Depends(get_db)):
     # HIGH risk / REVIEW_REQUIRED holds the payment for manual review — not credited.
     needs_review = fraud.get("recommended_action") == "REVIEW_REQUIRED" or fraud.get("flagged")
     if needs_review:
-        link.status = PaymentLinkStatus.REVIEW_REQUIRED
+        _transition_link(link, PaymentLinkStatus.REVIEW_REQUIRED)
         db.commit()
-        raise HTTPException(
-            status.HTTP_402_PAYMENT_REQUIRED,
-            detail={
-                "status": "REVIEW_REQUIRED",
-                "risk_score": link.risk_score,
-                "risk_level": link.risk_level,
-                "factors": fraud.get("factors", []),
-            },
-        )
+        raise _review_required_error(link, fraud.get("factors", []))
 
     wallet = ledger.get_or_create_wallet(db, link.merchant_user_id, link.currency)
     db.flush()
@@ -135,7 +176,7 @@ def pay_link(code: str, payload: PayLinkRequest, db: Session = Depends(get_db)):
         db, wallet, link.amount, "payment_link", link.code,
         f"Payment from {payload.payer_name}",
     )
-    link.status = PaymentLinkStatus.PAID
+    _transition_link(link, PaymentLinkStatus.PAID)
     link.paid_at = datetime.now(timezone.utc)
     db.commit()
 

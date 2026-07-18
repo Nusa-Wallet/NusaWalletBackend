@@ -21,3 +21,4 @@ class PaymentLinkResponse(BaseModel):
 class PayLinkRequest(BaseModel):
     payer_name: str
     origin_country: str | None = None  # ISO-2, forwarded to the fraud engine
+    idempotency_key: str | None = None
