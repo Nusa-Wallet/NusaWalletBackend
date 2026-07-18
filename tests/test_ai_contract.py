@@ -77,6 +77,17 @@ class BackendAiContractTest(unittest.TestCase):
         self.assertEqual(r.status_code, 201, r.text)
         return r.json()["code"]
 
+    def test_payment_link_returns_public_checkout_url(self):
+        code = self._create_link(amount="250", currency="SGD")
+        detail = self.client.get(f"/payment-links/{code}")
+        self.assertEqual(detail.status_code, 200, detail.text)
+        self.assertEqual(detail.json()["url"], f"/pay/{code}")
+
+        checkout = self.client.get(f"/pay/{code}")
+        self.assertEqual(checkout.status_code, 200, checkout.text)
+        self.assertIn("NusaWallet Sandbox Checkout", checkout.text)
+        self.assertIn("SGD", checkout.text)
+
     def _signed_totals_by_currency(self, ref_id: str) -> dict[str, Decimal]:
         db = TestingSession()
         try:
