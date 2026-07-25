@@ -7,6 +7,7 @@ from app.core.config import settings
 from app.core.database import Base, engine
 from app.modules.auth.router import router as auth_router
 from app.modules.insights.router import router as insights_router
+from app.modules.profile.router import router as profile_router
 from app.modules.payment_link.router import public_router as payment_link_public_router
 from app.modules.payment_link.router import router as payment_link_router
 from app.modules.settlement.router import router as settlement_router
@@ -46,6 +47,7 @@ app.include_router(payment_link_router)
 app.include_router(payment_link_public_router)
 app.include_router(settlement_router)
 app.include_router(insights_router)
+app.include_router(profile_router)
 
 
 @app.get("/health", tags=["health"])
