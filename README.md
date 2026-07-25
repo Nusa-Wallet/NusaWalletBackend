@@ -26,7 +26,7 @@ python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 copy .env.example .env
-python -m app.seed        # demo@nusawallet.id / password123
+python -m app.seed
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -76,6 +76,16 @@ wildcard CORS, or automatic table creation. Swagger/OpenAPI routes are also
 disabled in production mode. Use migrations, not `Base.metadata.create_all`, for
 schema changes outside the demo environment.
 
+## Demo Credentials
+
+| Nama | Email | Password |
+|------|-------|----------|
+| John Doe | john.doe@example.com | password123 |
+| Sarah Wijaya | sarah.wijaya@example.com | password123 |
+
+John Doe memiliki wallet IDR (75jt), USD (2,855), EUR (1,950).
+Sarah Wijaya memiliki wallet IDR (45jt), USD (2,070), SGD (2,350).
+
 ## Authentication
 
 - `POST /auth/login` accepts JSON with either (`email` + `password`) or
@@ -85,8 +95,8 @@ schema changes outside the demo environment.
 
 To authorize all protected endpoints in Swagger, click **Authorize** and fill:
 
-- `username`: the account email (`demo@nusawallet.id`) or phone (`081234567890`)
-- `password`: the account password, for example `password123`
+- `username`: `john.doe@example.com` or `sarah.wijaya@example.com`
+- `password`: `password123`
 - `client_id` and `client_secret`: leave blank
 
 Swagger calls `/auth/token`, stores the returned JWT, and sends it automatically to
