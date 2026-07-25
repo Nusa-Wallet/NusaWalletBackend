@@ -19,4 +19,4 @@ class Wallet(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     user: Mapped["User"] = relationship(back_populates="wallets")  # noqa: F821
-    entries: Mapped[list["LedgerEntry"]] = relationship(back_populates="wallet")  # noqa: F821
+    entries: Mapped[list["LedgerEntry"]] = relationship(back_populates="wallet", cascade="all, delete-orphan")  # noqa: F821
