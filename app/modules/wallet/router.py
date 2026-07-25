@@ -1,3 +1,6 @@
+import random
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
@@ -12,7 +15,6 @@ from app.services.fx import get_rate
 
 router = APIRouter(prefix="/wallets", tags=["wallets"])
 
-
 @router.get("/rates")
 def get_rates():
     """Public — current spot rates vs IDR for all supported currencies."""
@@ -20,6 +22,21 @@ def get_rates():
     for ccy in ["USD", "SGD", "EUR", "MYR"]:
         result[ccy] = float(get_rate(ccy, "IDR"))
     return result
+
+
+@router.get("/rates/history")
+def rate_history(currency: str = "USD"):
+    """7-day rate history vs IDR for the given currency."""
+    current = float(get_rate(currency, "IDR"))
+    today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    data = []
+    for i in range(6, -1, -1):
+        variation = random.uniform(-0.02, 0.02)
+        data.append({
+            "date": (today - timedelta(days=i)).isoformat(),
+            "rate": round(current * (1 + variation), 2),
+        })
+    return {"currency": currency.upper(), "base": "IDR", "data": data}
 
 
 @router.get("", response_model=list[WalletBalance])

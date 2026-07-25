@@ -4,12 +4,13 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import create_access_token, hash_password, verify_password
-from app.deps import get_current_user
+from app.deps import CurrentUser, get_current_user
 from app.models import User
 from app.schemas.auth import (
     LoginRequest,
     RegisterRequest,
     TokenResponse,
+    UpdateProfileRequest,
     UserResponse,
     normalize_phone,
 )
@@ -42,7 +43,12 @@ def _authenticate(
 
     if not user or not verify_password(password, user.hashed_password):
         raise _invalid_credentials()
-    return TokenResponse(access_token=create_access_token(user.email))
+    return TokenResponse(
+        access_token=create_access_token(user.email),
+        role=user.role,
+        full_name=user.full_name,
+        email=user.email,
+    )
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
@@ -61,7 +67,12 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
     db.refresh(user)
-    return TokenResponse(access_token=create_access_token(user.email))
+    return TokenResponse(
+        access_token=create_access_token(user.email),
+        role=user.role,
+        full_name=user.full_name,
+        email=user.email,
+    )
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -97,4 +108,19 @@ def oauth2_token(
 
 @router.get("/me", response_model=UserResponse)
 def me(current: User = Depends(get_current_user)):
+    return current
+
+
+@router.put("/me", response_model=UserResponse)
+def update_profile(
+    payload: UpdateProfileRequest,
+    current: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if payload.full_name is not None:
+        current.full_name = payload.full_name
+    if payload.phone is not None:
+        current.phone = payload.phone
+    db.commit()
+    db.refresh(current)
     return current
