@@ -82,6 +82,14 @@ class LoginRequest(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    role: str = "user"
+    full_name: str = ""
+    email: str = ""
+
+
+class UpdateProfileRequest(BaseModel):
+    full_name: str | None = None
+    phone: str | None = None
 
 
 class UserResponse(BaseModel):
@@ -89,6 +97,7 @@ class UserResponse(BaseModel):
     email: EmailStr
     full_name: str
     phone: str | None
+    role: str = "user"
     is_verified: bool
 
     model_config = {"from_attributes": True}
